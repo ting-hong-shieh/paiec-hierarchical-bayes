@@ -26,8 +26,11 @@ SUBJ_COLS = ["normalized_name", "provider", "release_date", "access_date", "harn
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+MODEL_PATH = os.path.join(ROOT, "submission", "model.py")
+
+
 def load_model():
-    spec = importlib.util.spec_from_file_location("paiec_model", os.path.join(ROOT, "submission", "model.py"))
+    spec = importlib.util.spec_from_file_location("paiec_model", MODEL_PATH)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m
@@ -81,20 +84,48 @@ def run(args):
     folds = [cand[i::args.folds] for i in range(args.folds)]
     model = load_model()
     meths = methods(model)
+    text_oof = None
+    if args.text_beta and args.text_oof:
+        to = pd.read_parquet(args.text_oof)
+        text_center = float(to.groupby("benchmark").y.mean().mean())
+        text_oof = {b: dict(zip(g.item_id, g.oof)) for b, g in to.groupby("benchmark")}
+        text_bmean = to.groupby("benchmark").oof.mean().to_dict()
+    probe = None
+    if args.llm_probe:
+        pr_ = pd.read_parquet(args.llm_probe)
+        probe = {b: dict(zip(g.item_id, g.l)) for b, g in pr_.groupby("benchmark")}
     per_pair = []
     t0 = time.time()
     for f, fold in enumerate(folds):
         prior = fit_prior_dict(args.data, fold, args.tau2)
         for hp in ("sc", "su", "sv"):
             prior[hp] *= getattr(args, "scale_" + hp)
+        if probe is not None:
+            prior["text_beta"] = args.text_beta
+            prior["text_center"] = args.llm_center
+        if text_oof is not None:
+            prior["text_beta"] = args.text_beta
+            prior["text_center"] = text_center
         prior_nosubj = dict(prior, theta={}, provider={}, unknown_var=0.0)
         for b in fold:
+            if probe is not None and b not in probe:
+                continue
             g = sb[(sb.benchmark == b) & (sb.n_items >= 80) & (sb.normalized_name.str.len() > 0)]
             g = g.drop_duplicates(subset=SUBJ_COLS)
             subs = g.to_dict("records")
             rng.shuffle(subs)
             subs = subs[: args.max_subjects]
             ib = items[items.benchmark == b]
+            if probe is not None:
+                d = probe[b]; bm = float(np.mean(list(d.values())))
+                model._TEXT_PRED = {x: d.get(x, bm) for x in ib.item_id.unique()}
+            if text_oof is not None:
+                d = text_oof.get(b, {})
+                bm = text_bmean.get(b, text_center)
+                if args.text_center_bench:
+                    model._TEXT_PRED = {x: d.get(x, bm) - bm + text_center for x in ib.item_id.unique()}
+                else:
+                    model._TEXT_PRED = {x: d.get(x, bm) for x in ib.item_id.unique()}
             pairs = []
             shared_perm = None
             for s in subs:
@@ -111,7 +142,11 @@ def run(args):
                     rng.shuffle(ids)
                     half = len(ids) // 2
                     acq, ev = ids[:half], ids[half:]
+                if probe is not None:
+                    ev = [x for x in ev if x in probe[b]]
                 ev = ev[: args.max_eval]
+                if not ev:
+                    continue
                 kn = si.set_index("item_id")[["k", "n"]]
                 subj = {c: str(s.get(c, "") or "") for c in SUBJ_COLS}
                 reveals = []
@@ -193,7 +228,19 @@ def main():
     for hp in ("sc", "su", "sv"):
         ap.add_argument("--scale-" + hp, type=float, default=1.0)
     ap.add_argument("--only-ours", action="store_true")
+    ap.add_argument("--model", default="", help="model file (default submission/model.py); "
+                    "the text/LLM offset runs need experiments/model_with_offset.py")
+    ap.add_argument("--text-beta", type=float, default=0.0)
+    ap.add_argument("--text-oof", default="")
+    ap.add_argument("--text-center-bench", action="store_true")
+    ap.add_argument("--llm-probe", default="", help="parquet benchmark,item_id,l: restrict to these benchmarks and eval items")
+    ap.add_argument("--llm-center", type=float, default=1.67)
     args = ap.parse_args()
+    global MODEL_PATH
+    if args.model:
+        MODEL_PATH = os.path.abspath(args.model)
+    elif args.text_beta:
+        raise SystemExit("--text-beta needs --model experiments/model_with_offset.py")
     per_pair = run(args)
     summary = summarize(per_pair)
     summary["args"] = vars(args)

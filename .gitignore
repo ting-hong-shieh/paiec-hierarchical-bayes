@@ -3,3 +3,4 @@ dist/
 __pycache__/
 paper/build.log
 *.tmp
+paper/topic-iteration-*/

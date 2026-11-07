@@ -40,6 +40,20 @@ The tools need `pandas`, `pyarrow`, `numpy`, `huggingface_hub`, `requests` and `
 `submission/model.py` needs nothing beyond the standard library. Validate the ZIP with
 `check_submission_zip.py` from the [official baseline repository](https://github.com/aims-foundations/paiec_baseline).
 
+## Exploratory experiments (not in the submitted predictor)
+
+Section 5 of the report tests item difficulty predicted from item text. `tools/download_items.py`
+fetches the `items` tables; `tools/text_prior.py` (+ `tools/textfeat.py`) fits the bag-of-words
+ridge model; `tools/llm_probe.py` builds the LLM-judgment probe (prompt files contain item text and
+are not redistributed; `results/llm_probe/llm_logits.parquet` holds the judged log-odds). The replica
+runs use `experiments/model_with_offset.py`, an experimental copy of the model with an item offset:
+
+```bash
+python tools/simulate.py --data data/ --only-ours --model experiments/model_with_offset.py \
+  --llm-probe results/llm_probe/llm_logits.parquet --text-beta 0.4 --out results/llm_b04.json
+python tools/llm_macros.py
+```
+
 ## Data and licences
 
 Code: MIT (see `LICENSE`). `submission/prior.json` is derived from the AI Measurement Data Bank

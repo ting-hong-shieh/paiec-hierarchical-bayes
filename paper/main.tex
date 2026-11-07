@@ -14,6 +14,7 @@
 \usepackage{graphicx}
 \input{generated/macros.tex}
 \input{generated/online.tex}
+\input{generated/llm_macros.tex}
 
 \title{Borrowing Strength Across AI Systems:\\ A Hierarchical Bayesian Predictor for Benchmark-Level Cold Starts}
 
@@ -28,7 +29,7 @@
 \maketitle
 
 \begin{abstract}
-The Predictive AI Evaluation Competition (PAIEC) asks for the probability that an AI system answers an item correctly on a benchmark that was held out from training, with 0 to 31 revealed labels per system--benchmark pair. We submit a small, transparent predictor: a logistic model with a benchmark intercept, a subject ability fitted offline on the AI Measurement Data Bank, a subject-by-benchmark deviation and an item effect, all with Gaussian priors whose scales are estimated on training benchmarks. At test time the predictor pools every revealed label on the same anonymous benchmark, from any subject, computes a MAP fit, and returns the posterior-mean probability under a Laplace approximation. It uses only the Python standard library, no API calls and no learned text model. In a local replica of the streaming protocol with benchmark-level cross-validation (\NPairs{} pairs on \NBench{} held-out training benchmarks), it reaches a Brier ALC of \AlcOurs{}, against \AlcConst{} for a constant 0.5 and \AlcMean{} for the official empirical-mean baseline (difference \DiffMean{}, 95\% cluster-bootstrap interval). An ablation attributes the gain mainly to pooling labels across subjects (\DiffPool{}); the offline subject ability adds no detectable gain (\DiffSubj{}). We report what the predictor cannot do: at budget 0 it is barely better than 0.5, because benchmark difficulty is not predicted from item content.
+The Predictive AI Evaluation Competition (PAIEC) asks for the probability that an AI system answers an item correctly on a benchmark that was held out from training, with 0 to 31 revealed labels per system--benchmark pair. We submit a small, transparent predictor: a logistic model with a benchmark intercept, a subject ability fitted offline on the AI Measurement Data Bank, a subject-by-benchmark deviation and an item effect, all with Gaussian priors whose scales are estimated on training benchmarks. At test time the predictor pools every revealed label on the same anonymous benchmark, from any subject, computes a MAP fit, and returns the posterior-mean probability under a Laplace approximation. It uses only the Python standard library, no API calls and no learned text model. In a local replica of the streaming protocol with benchmark-level cross-validation (\NPairs{} pairs on \NBench{} held-out training benchmarks), it reaches a Brier ALC of \AlcOurs{}, against \AlcConst{} for a constant 0.5 and \AlcMean{} for the official empirical-mean baseline (difference \DiffMean{}, 95\% cluster-bootstrap interval). An ablation attributes the gain mainly to pooling labels across subjects (\DiffPool{}); the offline subject ability adds no detectable gain (\DiffSubj{}). We report what the predictor cannot do: at budget 0 it is barely better than 0.5, because benchmark difficulty is not predicted from item content. Two exploratory experiments, not part of the submitted predictor, address this gap: a bag-of-words difficulty model does not transfer across benchmarks, whereas LLM-judged item difficulty lowers Brier ALC by \LlmRelFour\% in a small probe on \LlmBench{} benchmarks (\LlmDiffFour{}).
 \end{abstract}
 
 \section{Introduction}
@@ -41,7 +42,7 @@ averaged equally over pairs, where $B_n$ is the Brier score at budget $n$.
 
 Two features of the interface shape our approach. First, the revealed evidence passed to the predictor contains labels ``across sampled subject--benchmark pairs'' \citep{paiec2026}, so while predicting subject $s$ on benchmark $b$ we can also see other subjects' outcomes on $b$. Second, 50\% of the score weight sits on budgets 1--7, where a pair has at most seven labels of its own. A predictor that uses only the target pair's labels, such as the official empirical-mean baseline \citep{paiec_baselines_2026}, is noisy there; the baseline's Brier score at budget 1 is worse than a constant (Table~\ref{tab:main}).
 
-\textbf{Contributions.} (i) A hierarchical Bayesian predictor that pools evidence across subjects on the same held-out benchmark and integrates over its own uncertainty (\S\ref{sec:method}). (ii) A local replica of the streaming protocol with benchmark-level cross-validation and a cluster bootstrap over benchmarks (\S\ref{sec:setup}). (iii) Ablations showing where the gain comes from and where it does not (\S\ref{sec:results}), and a list of limitations (\S\ref{sec:limits}).
+\textbf{Contributions.} (i) A hierarchical Bayesian predictor that pools evidence across subjects on the same held-out benchmark and integrates over its own uncertainty (\S\ref{sec:method}). (ii) A local replica of the streaming protocol with benchmark-level cross-validation and a cluster bootstrap over benchmarks (\S\ref{sec:setup}). (iii) Ablations showing where the gain comes from and where it does not (\S\ref{sec:results}). (iv) Two exploratory experiments on predicting item difficulty from item text, one negative and one preliminary positive (\S\ref{sec:explore}), and a list of limitations (\S\ref{sec:limits}).
 
 \textbf{Related work.} Item response theory (IRT) has been used to estimate an LLM's benchmark accuracy from a small subset of items; tinyBenchmarks \citep{polo2024tinybenchmarks}, for example, shows that 100 curated examples can suffice on MMLU. That line of work assumes ``access to correctness evaluations for a set of LLMs that have been previously evaluated on the entirety of the benchmark'' \citep{polo2024tinybenchmarks}, which is what lets it fit item parameters. PAIEC removes this assumption: the test benchmark has no prior evaluations, so item parameters cannot be fitted offline. Our model keeps the IRT form but learns the benchmark intercept, and item effects where possible, from the few labels revealed during evaluation. We did not run a systematic literature review in the time available; this paragraph is not a survey.
 
@@ -123,11 +124,37 @@ where $\mu$ is the MAP linear predictor and $V$ is the sum of the variances of $
 
 \paragraph{Platform result.} \OnlineResult
 
+\section{Exploratory: item difficulty from text (not in the submitted predictor)}
+\label{sec:explore}
+
+Budget 0 carries 10\% of the score, and item effects of evaluation items are never revealed, so information about an item before any label arrives would help at every budget. After submitting, we ran two experiments with the item text in measurement-db. Neither changes the submitted predictor; both enter Eq.~\ref{eq:model} as a fixed item offset $\beta(\ell_i - \bar\ell)$, where $\ell_i$ is a predicted log-odds of success for item $i$, and the offset also enters the fit of revealed labels.
+
+\paragraph{Bag of words: negative.} A ridge regression from hashed word uni- and bigrams and simple format statistics (length, digits, answer options, code) of the item text to the item's pooled log-odds accuracy, trained on \TextBench{} training benchmarks with benchmark-grouped five-fold cross-validation, did not transfer to held-out benchmarks: the best out-of-fold item-level $R^2$ was \TextItemRtwo{} and the within-benchmark correlation \TextWithin{}. The features mostly identify the benchmark. With out-of-fold predictions and $\beta=0.5$ in the full replica, ALC changed by \TextAlcDiff{}.
+
+\paragraph{LLM judgments: preliminary positive.} We asked an LLM (GPT-6-astra through the Codex command-line tool, 20 items per prompt) for the probability that ``a typical AI system evaluated on this benchmark'' answers each item, for 80 random items from each of \LlmBench{} held-out benchmarks. The judged log-odds correlate with the items' pooled log-odds accuracy at \LlmWithinCorr{} within a benchmark on average (from \LlmWithinMin{} to \LlmWithinMax{}) and at \LlmBenchCorr{} across the eight benchmark means. We reran the replica on these benchmarks, restricting evaluation items to the judged ones (\LlmPairs{} pairs), with $\bar\ell$ the mean judged log-odds (Table~\ref{tab:llm}). All three values of $\beta$ lower ALC, mostly at budget 0, but every interval is wide, $\beta$ was chosen on the same benchmarks, and one benchmark had a negative correlation. Asking for one item at a time, as a predictor would at scoring time, gave log-odds that correlate with the batch ones at \SingleCorrBatch{} (\SingleN{} items) but are more optimistic (mean \SingleMean{} against \SingleBatchMean{}), so the centring would have to be recalibrated. Using this at scoring time needs a paid API key and makes the predictor non-deterministic; a full test needs judgments for all evaluation items in the replica.
+
+\begin{table}[t]
+  \caption{Exploratory LLM item-difficulty offset (not submitted). Local replica restricted to \LlmItems{} judged items on \LlmBench{} held-out benchmarks (\LlmPairs{} pairs). Differences are paired, with 95\% cluster-bootstrap intervals over benchmarks.}
+  \label{tab:llm}
+  \centering
+  \small
+  \begin{tabular}{lcccc}
+    \toprule
+    Predictor & ALC & Difference & $B_0$ & $B_3$ \\
+    \midrule
+    Submitted (label-only) & \LlmAlcBase{} & -- & \LlmBzeroBase{} & \LlmBthreeBase{} \\
+    \quad + LLM offset, $\beta=0.4$ & \LlmAlcFour{} & \LlmDiffFour{} & \LlmBzeroFour{} & \LlmBthreeFour{} \\
+    \quad + LLM offset, $\beta=0.7$ & \LlmAlcSeven{} & \LlmDiffSeven{} & \LlmBzeroSeven{} & \LlmBthreeSeven{} \\
+    \quad + LLM offset, $\beta=1.0$ & \LlmAlcTen{} & \LlmDiffTen{} & \LlmBzeroTen{} & \LlmBthreeTen{} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
 \section{Limitations}
 \label{sec:limits}
 
 \begin{itemize}
-  \item \textbf{Budget 0 is nearly uninformed.} $B_0$ is 0.249 against 0.250 for a constant. The predictor does not read item text, so it cannot tell a hard new benchmark from an easy one before labels arrive. An LLM- or embedding-based prior on item difficulty is the obvious next step; we did not attempt it, partly because it needs API keys at scoring time.
+  \item \textbf{Budget 0 is nearly uninformed.} $B_0$ is 0.249 against 0.250 for a constant. The predictor does not read item text, so it cannot tell a hard new benchmark from an easy one before labels arrive. An LLM-judged item offset looks promising in a small probe (\S\ref{sec:explore}) but was not submitted, because it needs an API key at scoring time and its evidence is still weak.
   \item \textbf{The local replica is our reading of the protocol.} The number of sampled subjects per benchmark, the split design and subject overlap between pools are unknown (\S\ref{sec:setup}). The training benchmarks may also differ from the private test pool. The local numbers rank methods under our assumptions; they do not predict the leaderboard score.
   \item \textbf{The subject prior failed to help} in our replica, and $\lambda$ comes from leave-one-benchmark-out cells that are dominated by benchmarks with many subjects. Our subject keys rely on exact matches of normalised names.
   \item \textbf{Approximations.} The Laplace variances are diagonal and ignore the negative posterior correlation between $c_b$ and $u_{sb}$, which overstates predictive variance somewhat. The hyperparameters are point estimates; $\sigma_v$ is estimated from item accuracy pooled over subjects, which mixes item difficulty with subject composition.
@@ -148,11 +175,11 @@ Code, the fitted prior and the scripts for every number in this report are relea
   \item \texttt{python tools/analyze.py} to regenerate the tables and the figure;
   \item zip \texttt{submission/} (model.py, prior.json, README.md) and check it with the official \texttt{check\_submission\_zip.py}.
 \end{enumerate}
-Each simulation takes about three minutes on a 24-thread CPU and about 4\,GB of memory. The submitted predictor itself is deterministic and makes no network calls.
+Each simulation takes about three minutes on a 24-thread CPU and about 4\,GB of memory. The exploratory runs use \texttt{tools/download\_items.py}, \texttt{tools/text\_prior.py}, \texttt{tools/llm\_probe.py} and \texttt{simulate.py --model experiments/model\_with\_offset.py --text-beta} (with \texttt{--text-oof} or \texttt{--llm-probe}). The submitted predictor itself is deterministic and makes no network calls.
 
 \section*{Disclosures}
 
-\textbf{Training data.} Only the AI Measurement Data Bank \citep{measurementdb2026}, revision \texttt{54074453}, as listed in the competition's benchmark inventory: tables \texttt{benchmarks}, \texttt{subjects} and \texttt{responses} of benchmarks with binary, item-level, public responses. No item text, traces or embeddings were used. \textbf{Pretrained models.} None. \textbf{Coding assistant.} The code and a first draft of this report were written with an LLM coding assistant (Claude Code, Anthropic) under the author's direction; the author checked the method, the numbers and the text. \textbf{Prior work reused.} The official baseline repository \citep{paiec_baselines_2026} was used for its submission checker and as the empirical-mean comparison.
+\textbf{Training data.} Only the AI Measurement Data Bank \citep{measurementdb2026}, revision \texttt{54074453}, as listed in the competition's benchmark inventory: tables \texttt{benchmarks}, \texttt{subjects} and \texttt{responses} (and \texttt{items} for \S\ref{sec:explore}) of benchmarks with binary, item-level, public responses. The submitted predictor uses no item text, traces or embeddings; the exploratory experiments of \S\ref{sec:explore} also use the item text in the \texttt{items} tables. \textbf{Pretrained models.} None in the submitted predictor; GPT-6-astra, through the Codex command-line tool, produced the item judgments of the exploratory probe. \textbf{Coding assistant.} The code and a first draft of this report were written with an LLM coding assistant (Claude Code, Anthropic) under the author's direction; the author checked the method, the numbers and the text. \textbf{Prior work reused.} The official baseline repository \citep{paiec_baselines_2026} was used for its submission checker and as the empirical-mean comparison.
 
 \bibliographystyle{plainnat}
 \bibliography{refs}
