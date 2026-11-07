@@ -120,7 +120,7 @@ def figure(d):
     s = d["summary"]["methods"]
     x = np.arange(6)
     fig, ax = plt.subplots(figsize=(3.3, 2.1))
-    series = [("const_0.5", fs.GREY, "Constant 0.5", "s", "--"),
+    series = [("const_0.5", fs.GREY, "Constant 0.5", "s", ":"),
               ("empirical_mean", fs.VERMILION, "Empirical mean", "^", "-"),
               ("ours_no_pool", fs.BLUE, "Ours, no pooling", "D", "-"),
               ("ours", fs.NAVY, "Ours (full)", "o", "-")]
@@ -132,12 +132,13 @@ def figure(d):
         se = arr.std(0, ddof=1) / np.sqrt(len(arr))
         ax.fill_between(x, mean - 1.96 * se, mean + 1.96 * se, color=col, alpha=0.15, lw=0)
     # Direct labels on the right.
-    ends = {"const_0.5": 0.250, "empirical_mean": 0.166, "ours_no_pool": 0.204, "ours": 0.185}
+    ends = {"const_0.5": 0.250, "ours_no_pool": 0.2160, "empirical_mean": 0.1975, "ours": 0.1790}
     for key, col, lab, mk, ls in series:
-        ax.text(5.15, ends[key], lab, color=col, va="center", fontsize=6.8)
+        ax.text(5.15, ends[key], lab, color=col, va="center", fontsize=7.2,
+                bbox=dict(fc="white", ec="none", pad=0.3))
     ax.set_xticks(x, ["0", "1", "3", "7", "15", "31"])
-    ax.set_xlim(-0.2, 7.2)
-    ax.set_ylim(0.155, 0.39)
+    ax.set_xlim(-0.2, 7.6)
+    ax.set_ylim(0.165, 0.39)
     ax.set_xlabel("Label budget per pair (log$_2$(1+n) spacing)")
     ax.set_ylabel("Brier score (lower is better)")
     ax.grid(axis="y")
